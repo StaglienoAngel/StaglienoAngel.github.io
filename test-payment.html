@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lightning Payment Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        #qrcode {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        button {
+            background: #f7931a;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover { opacity: 0.8; }
+        .status {
+            margin: 20px 0;
+            padding: 12px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.1);
+        }
+        .success { background: rgba(76, 175, 80, 0.3); }
+        .error { background: rgba(244, 67, 54, 0.3); }
+        .invoice {
+            background: #000;
+            padding: 10px;
+            border-radius: 4px;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        .invoice:hover { background: #333; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+    <h1>⚡ Lightning Payment Test</h1>
+    <p>Testing LNbits integration for Staglieno</p>
+
+    <button onclick="createInvoice()">Generate 21 sat invoice</button>
+
+    <div id="status" class="status" style="display:none;"></div>
+
+    <div id="qrcode"></div>
+    <div id="invoice" class="invoice" style="display:none;" onclick="copyInvoice()"></div>
+
+    <div id="payment-status" style="display:none;">
+        <p>⏳ Waiting for payment...</p>
+    </div>
+
+    <script>
+        const LNBITS_URL = 'https://lachispa.me';
+        const LNBITS_API_KEY = 'ae381ca3a7424acf8fb7cd3f3299e1c0';
+
+        let currentInvoice = null;
+        let checkInterval = null;
+
+        async function createInvoice() {
+            showStatus('Creating invoice...', 'info');
+
+            try {
+                console.log('Calling LNbits API...');
+                const response = await fetch(`${LNBITS_URL}/api/v1/payments`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Api-Key': LNBITS_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        out: false,
+                        amount: 21,
+                        memo: 'Staglieno Test Payment',
+                        expiry: 3600
+                    })
+                });
+
+                console.log('Response status:', response.status);
+                const data = await response.json();
+                console.log('Response data:', data);
+
+                if (data.payment_request) {
+                    currentInvoice = {
+                        hash: data.payment_hash,
+                        request: data.payment_request
+                    };
+
+                    showStatus('Invoice created! Scan the QR code to pay.', 'success');
+
+                    // Show invoice
+                    const invoiceEl = document.getElementById('invoice');
+                    invoiceEl.textContent = data.payment_request;
+                    invoiceEl.style.display = 'block';
+
+                    // Generate QR
+                    const qrEl = document.getElementById('qrcode');
+                    qrEl.innerHTML = '';
+                    QRCode.toCanvas(
+                        document.createElement('canvas'),
+                        data.payment_request.toUpperCase(),
+                        {
+                            width: 300,
+                            margin: 2,
+                            color: { dark: '#000000', light: '#ffffff' }
+                        },
+                        (err, canvas) => {
+                            if (err) {
+                                console.error('QR error:', err);
+                                showStatus('QR generation failed: ' + err, 'error');
+                            } else {
+                                qrEl.appendChild(canvas);
+                            }
+                        }
+                    );
+
+                    // Show payment waiting status
+                    document.getElementById('payment-status').style.display = 'block';
+
+                    // Start checking for payment
+                    startPaymentCheck();
+                } else {
+                    showStatus('Failed to create invoice: ' + JSON.stringify(data), 'error');
+                }
+            } catch (err) {
+                console.error('Error:', err);
+                showStatus('Error: ' + err.message, 'error');
+            }
+        }
+
+        function startPaymentCheck() {
+            if (checkInterval) clearInterval(checkInterval);
+
+            checkInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(
+                        `${LNBITS_URL}/api/v1/payments/${currentInvoice.hash}`,
+                        {
+                            headers: { 'X-Api-Key': LNBITS_API_KEY }
+                        }
+                    );
+
+                    const data = await response.json();
+                    console.log('Payment check:', data);
+
+                    if (data.paid) {
+                        clearInterval(checkInterval);
+                        showStatus('✅ Payment received! Thank you!', 'success');
+                        document.getElementById('payment-status').innerHTML = '<p>✅ PAID!</p>';
+                    }
+                } catch (err) {
+                    console.error('Check error:', err);
+                }
+            }, 2000);
+        }
+
+        function copyInvoice() {
+            if (currentInvoice) {
+                navigator.clipboard.writeText(currentInvoice.request);
+                showStatus('Invoice copied to clipboard!', 'success');
+                setTimeout(() => showStatus('', 'info'), 2000);
+            }
+        }
+
+        function showStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = 'status ' + type;
+            el.style.display = msg ? 'block' : 'none';
+        }
+    </script>
+</body>
+</html>
